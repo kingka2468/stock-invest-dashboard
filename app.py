@@ -13,7 +13,7 @@ os.makedirs(HISTORY_DIR, exist_ok=True)
 # ---- 초기 세션 상태 설정 ----
 def init_session_state():
     defaults = {
-        "tickers_input": "NVDA, GOOGL, AMZN, MSFT,  AAPL, IONQ, TSLA, CRM, V, BRK-B, NKE, SBUX, WELL, MAIN, LMT, PG, UNH, META",
+        "tickers_input": "NVDA, GOOGL, AMZN, MSFT,  AAPL, TSLA, META",
         "max_per": 20,
         "min_up": 70,
         "min_drop": 30,
