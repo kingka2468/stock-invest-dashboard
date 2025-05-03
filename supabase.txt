@@ -1,0 +1,12 @@
+
+supabase
+
+https://ljudshapqtgtzswzygyy.supabase.co
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqdWRzaGFwcXRndHpzd3p5Z3l5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ1NTM3MDQsImV4cCI6MjA2MDEyOTcwNH0.D-RXFfMKl9kRbPvDOP-tWd18J1i33ys9oJSx-KNCx1k
+
+
+
+이 코드에 위 supabase 내용 방영해줘.
+- SUPABASE_URL = "https://ljudshapqtgtzswzygyy.supabase.co"
+- SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqdWRzaGFwcXRndHpzd3p5Z3l5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ1NTM3MDQsImV4cCI6MjA2MDEyOTcwNH0.D-RXFfMKl9kRbPvDOP-tWd18J1i33ys9oJSx-KNCx1k"

@@ -17,7 +17,8 @@
     "LMT",
     "PG",
     "UNH",
-    "META"
+    "META",
+    "TSM"
   ],
   "max_per": 20,
   "min_up": 70,

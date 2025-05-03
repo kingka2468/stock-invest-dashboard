@@ -30,6 +30,14 @@ def init_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
+    # 🔽 포트폴리오 파일이 있으면 자동 로딩
+    for market_key in ['us', 'kr']:
+        file = f"portfolio_{market_key}.json"
+        if os.path.exists(file):
+            with open(file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                st.session_state.saved_portfolio[market_key] = data
+
 init_session_state()
 
 # ---- 포트폴리오 저장 및 불러오기 ----
@@ -193,7 +201,7 @@ if st.button("📊 분석 시작"):
                 price = info.get("currentPrice", 0)
                 high = info.get("fiftyTwoWeekHigh", 1)
                 low = info.get("fiftyTwoWeekLow", 1)
-                per = info.get("trailingPE", 999)
+                per = info.get("trailingPE", 0)
                 pbr = info.get("priceToBook", 0)
                 dividend = info.get("dividendRate", 0)
                 dividend_yield = (dividend / price) * 100 if price > 0 else 0
