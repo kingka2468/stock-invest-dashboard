@@ -5,6 +5,6 @@ altair
 openpyxl
 xlsxwriter
 finance-datareader
-pykrx==1.0.45
+pykrx
 numpy
-setuptools>=65.0.0
+setuptools
