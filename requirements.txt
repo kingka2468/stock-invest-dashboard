@@ -12,4 +12,5 @@ altair>=5.0
 openpyxl
 xlsxwriter
 
-setuptools
+setuptools==68.2.2
+
