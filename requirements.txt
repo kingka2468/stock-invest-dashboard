@@ -12,4 +12,9 @@ altair>=5.0
 openpyxl
 xlsxwriter
 
+<<<<<<< HEAD
 setuptools==68.2.2
+=======
+setuptools==68.2.2
+
+>>>>>>> a3481150652f3086e4519ae5cc71942a9b9783a1
