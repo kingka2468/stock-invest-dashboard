@@ -1,20 +1,10 @@
-streamlit>=1.31,<1.35
-
-pandas>=1.5,<2.2
-numpy>=1.23,<2.0
-
-yfinance>=0.2.36
-finance-datareader>=0.9.90
-
-pykrx==0.1.62
-
-altair>=5.0
+streamlit
+pandas
+numpy
+yfinance
+finance-datareader
+pykrx
+altair
 openpyxl
 xlsxwriter
-
-<<<<<<< HEAD
-setuptools==68.2.2
-=======
-setuptools==68.2.2
-
->>>>>>> a3481150652f3086e4519ae5cc71942a9b9783a1
+requests
