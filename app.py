@@ -125,8 +125,8 @@ st.set_page_config(page_title="주식 투자 판단 대시보드 v13.1", layout=
 st.title("📊 주식 투자 판단 대시보드 (v13.1)")
 
 # 시장 선택에 암호화폐 추가
-market_choice = st.radio("📌 대상 선택", ["한국 주식", "미국 주식", "암호화폐"], horizontal=True)
-st.session_state.market = 'kr' if market_choice == "한국 주식" else 'us' if market_choice == "미국 주식" else 'crypto'
+market_choice = st.radio("📌 대상 선택", ["한국주식", "미국주식", "암호화폐"], horizontal=True)
+st.session_state.market = 'kr' if market_choice == "한국주식" else 'us' if market_choice == "미국주식" else 'crypto'
 
 # 기본 티커 설정 변경 (암호화폐 선택 시 예시)
 if st.session_state.market == 'crypto' and st.session_state.tickers_input.startswith("005930"):
@@ -296,56 +296,62 @@ if df is not None:
         """, unsafe_allow_html=True)
 
     
-    # ✅ 버블 차트 섹션 (동적 축 이름 반영 버전)
+    # ✅ 버블 차트 섹션 (동적 축 이름 및 색상 동기화 반영)
     st.subheader("📈 투자 지표 대시보드")
     
     # 1. 시장별 동적 설정 (제목 및 축 이름)
     if st.session_state.market == 'crypto':
         x_title = '24시간 변동률 (%)'
         chart_main_title = "암호화폐 변동성 대비 상승여력 분석"
-        # 암호화폐는 배당이 없으므로 크기 고정 또는 다른 지표 권장
         bubble_size_title = "고정 크기" if not enable_div else "배당률(0%)"
     else:
         x_title = 'PER (주가수익비율)'
         chart_main_title = "PER 대비 상승여력 분석 (버블 크기: 배당률)"
         bubble_size_title = "배당률 크기"
 
-    # 시장에 따른 X축 데이터 열 선택
-    x_axis_val = '24시간 변동률 (%)' if st.session_state.market == 'crypto' else 'PER'
-    x_title = '24시간 변동률 (%)' if st.session_state.market == 'crypto' else 'PER (주가수익비율)'
+    # 2. X축 데이터 열 선택 (변수명을 x_col로 통일하여 NameError 해결)
+    x_col = '24시간 변동률 (%)' if st.session_state.market == 'crypto' else 'PER'
 
-    # 2. 버블이 짤리지 않도록 축의 범위를 데이터보다 넓게 설정
-    per_min, per_max = df[x_axis_val].min(), df[x_axis_val].max()
+    # 3. 축 범위 및 여백 계산 (변수명 일치 확인)
+    per_min, per_max = df[x_col].min(), df[x_col].max()
     up_min, up_max = df['상승여력 (%)'].min(), df['상승여력 (%)'].max()
 
     per_margin = (per_max - per_min) * 0.15 if per_max != per_min else 5
     up_margin = (up_max - up_min) * 0.15 if up_max != up_min else 5
 
-    # 3. 버블 크기 설정
+    # 4. 버블 크기 설정
     size_encoding = alt.Size('배당률 (%)', 
-                             scale=alt.Scale(range=[150, 800]), 
-                             legend=alt.Legend(title=bubble_size_title)) if enable_div else alt.value(150)
+                             scale=alt.Scale(range=[120, 700]), 
+                             legend=alt.Legend(title=bubble_size_title)) if enable_div else alt.value(120)
     
-    # 4. 차트 생성
+    # 5. 차트 색상 및 범위 설정
+    domain = ['🔥🔥🔥🔥 초초적극 매수', '🔥🔥🔥 초적극 매수', '🔥🔥 적극 매수', '🔥 매수', '👀 관망']
+    range_ = ['darkred', '#ff4b4b', 'green', '#DAA520', "#666769"]
+
     bubble = alt.Chart(df).mark_circle(opacity=0.7, stroke='white', strokeWidth=1).encode(
-        x=alt.X(x_axis_val, 
-                title=x_title, # ✅ 동적 타이틀 반영
-                scale=alt.Scale(domain=[per_min - per_margin, per_max + per_margin])),
+        x=alt.X(x_col, 
+                title=x_title, 
+                scale=alt.Scale(domain=[per_min - per_margin, per_max + per_margin])), # ✅ per_margin으로 수정
         y=alt.Y('상승여력 (%)', 
-                title='상승여력 (고점 대비 %)', 
-                scale=alt.Scale(domain=[up_min - up_margin, up_max + up_margin])),
-        color=alt.Color('투자등급', legend=alt.Legend(title="투자 등급")),
+                title='상승여력 (%)', 
+                scale=alt.Scale(domain=[up_min - up_margin, up_max + up_margin])), # ✅ up_margin으로 수정
+        
+        # 색상 강제 지정 (표와 동기화)
+        color=alt.Color('투자등급', 
+                        scale=alt.Scale(domain=domain, range=range_),
+                        legend=alt.Legend(title="투자 등급")),
+        
         size=size_encoding,
-        tooltip=['기업명', '종목', x_axis_val, '상승여력 (%)', '배당률 (%)', '뉴스감성']
+        tooltip=['기업명', '종목', x_col, '상승여력 (%)', '배당률 (%)', '뉴스감성', '투자등급']
     ).properties(
         height=500, 
-        title=chart_main_title, # ✅ 동적 메인 타이틀 반영
+        title=chart_main_title,
         padding={"left": 30, "top": 30, "right": 30, "bottom": 30}
     ).interactive()
     
     st.altair_chart(bubble, use_container_width=True)
 
-    # 2. 바 차트
+    # 5. 바 차트
     bar = alt.Chart(df).mark_bar().encode(
         x=alt.X('고점대비 (%)', title='고점 대비 하락률 (%)'),
         y=alt.Y('기업명', sort='x', title='종목명'),
