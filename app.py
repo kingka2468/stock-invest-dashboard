@@ -353,9 +353,24 @@ if df is not None:
         return 'background-color: #f1f3f4; color: #3c4043'
 
     st.subheader("📋 종합 투자 분석 표")
+
+    # 한국 시장 여부 확인 (현재가 포맷팅용)
+    is_kr = st.session_state.market == 'kr'
+
+    # 1. 소수점 및 N/A 포맷팅 적용
+    styled_df = display_df.style.format({
+        'PER': lambda x: "N/A" if x == 0 else f"{x:.2f}",
+        'PBR': lambda x: "N/A" if x == 0 else f"{x:.2f}",
+        '배당률 (%)': lambda x: "N/A" if x == 0 else f"{x:.2f}",
+        '24시간 변동률 (%)': "{:.2f}",
+        '고점대비 (%)': "{:.2f}",
+        '상승여력 (%)': "{:.2f}",
+        '52주 고점': "{:,.0f}" if is_kr else "{:,.2f}", # 국장은 정수, 외장/코인은 소수점 2자리
+        '현재가': "{:,.0f}" if is_kr else "{:,.2f}" # 국장은 정수, 외장/코인은 소수점 2자리
+    })
     
-    # Pandas Styler를 활용한 조건부 서식 적용
-    styled_df = display_df.style.apply(lambda x: [f"background-color: {get_color_code(v)[0]}; color: {get_color_code(v)[1]}" for v in x], subset=['투자등급'])\
+    # 2. 배경색 및 조건부 서식 추가 적용
+    styled_df = styled_df.apply(lambda x: [f"background-color: {get_color_code(v)[0]}; color: {get_color_code(v)[1]}" for v in x], subset=['투자등급'])\
         .applymap(get_sentiment_color, subset=['뉴스감성'])\
         .apply(lambda s: ['background-color: #d1f7d6' if 0 < v <= max_per else '' for v in s], subset=['PER'])\
         .apply(lambda s: ['background-color: #d1e0f7' if v <= -min_drop else '' for v in s], subset=['고점대비 (%)'])\
@@ -363,7 +378,9 @@ if df is not None:
         .apply(lambda s: ['background-color: #fde2e2' if v >= min_div else '' for v in s], subset=['배당률 (%)'])\
         .apply(lambda s: ['background-color: #e8f0fe' if abs(v) > 5 else '' for v in s], subset=['24시간 변동률 (%)'])
     
+    # 3. 화면 출력
     st.dataframe(styled_df, use_container_width=True)
+
 
     # 종목별 상세 요약 카드 출력
     st.subheader("🧠 AI 투자 요약")
