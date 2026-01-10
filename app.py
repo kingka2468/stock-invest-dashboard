@@ -5,9 +5,11 @@ import json
 import os
 import requests
 import re
+from collections import Counter
 from datetime import datetime, timedelta
 from pykrx import stock
 from io import BytesIO
+from collections import Counter
 
 # --- 1. 설정 및 환경 초기화 ---
 NAVER_CLIENT_ID = "UtJVnNmIIhf5KLF4Wssx"
@@ -52,30 +54,31 @@ def get_sentiment_score(text, market='kr'):
     return score
 
 def get_stock_news(query, market='us'):
-    news_list, total_sentiment = [], 0
+    news_display, full_text_list, total_sentiment = [], [], 0
     try:
         if market == 'us':
-            # Finnhub API는 최근 3일간의 뉴스를 가져옵니다.
             url = f"https://finnhub.io/api/v1/company-news?symbol={query}&from={(datetime.now()-timedelta(days=3)).strftime('%Y-%m-%d')}&to={datetime.now().strftime('%Y-%m-%d')}&token={FINNHUB_API_KEY}"
             res = requests.get(url, timeout=5).json()[:3]
             for item in res:
-                title = item.get('headline', '')
-                summary = item.get('summary', '')
-                news_list.append(title)
-                # 제목과 요약을 함께 분석하여 정확도 향상
+                title, summary = item.get('headline', ''), item.get('summary', '')
+                news_display.append(title) # 화면 표시용 (제목만)
+                full_text_list.append(f"{title} {summary}") # 키워드 분석용 (제목+요약)
                 total_sentiment += get_sentiment_score(title + summary, 'us')
         else:
             url = f"https://openapi.naver.com/v1/search/news.json?query={query}&display=3&sort=sim"
             headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
             res = requests.get(url, headers=headers, timeout=5).json()
             for item in res.get('items', []):
-                clean_title = re.sub(r'<[^>]*>', '', item['title'])
-                news_list.append(clean_title)
-                total_sentiment += get_sentiment_score(clean_title + item['description'], 'kr')
+                title = re.sub(r'<[^>]*>', '', item['title'])
+                desc = re.sub(r'<[^>]*>', '', item['description'])
+                news_display.append(title) # 화면 표시용
+                full_text_list.append(f"{title} {desc}") # 키워드 분석용
+                total_sentiment += get_sentiment_score(title + desc, 'kr')
     except: pass
     
     label = "🙂 긍정" if total_sentiment > 0 else "😟 부정" if total_sentiment < 0 else "🧐 중립"
-    return news_list, label, total_sentiment
+    # 표시용 뉴스, 분석용 텍스트, 라벨, 점수를 모두 반환
+    return news_display, full_text_list, label, total_sentiment
 
 # --- 3. 유틸리티 함수 ---
 def get_save_file(): return f"portfolio_{st.session_state.market}.json"
@@ -159,6 +162,62 @@ st.session_state.tickers_input = tickers_input
 tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
 # --- 5. 분석 시작 (미국 주식 None 처리 로직 수정) ---
+def extract_keywords(full_texts, ticker_name, market='kr'):
+    # 1. 투자 맥락에서 변별력이 없는 일반 단어 대거 보강
+    stop_words = {
+        # --- 한국어 파트 ---
+        # 일반 조사 및 대명사
+        '이번엔', '달라', '스토리', '이슈들', '최대', '올해', '때문', '통해', '대해', '위해',
+        '관련', '진행', '이후', '이상', '이하', '기대', '전망', '분석', '기사', '뉴스', '오늘',
+        '등', '및', '위한', '기존', '확인', '중', '것', '이', '가', '에', '의', '를', '은', '는',
+        '로', '으로', '과', '와', '도', '까지', '부터', '에서', '이다', '입니다', '하고',
+        # 주식/코인 관련 노이즈 (너무 당연해서 의미 없는 단어)
+        '종목', '주식', '코인', '시장', '투자', '투자자', '거래', '분석', '상승', '하락', 
+        '전망', '분기', '실적', '주가', '가격', '비중', '목표', '추천', '매수', '매도', 
+        '상황', '이유', '때문', '뉴스', '속보', '특징주', '전문가', '전략', '포인트',
+
+        # --- 영어 파트 ---
+        # 관사, 전치사, 대명사 (강화)
+        'the', 'and', 'for', 'with', 'from', 'into', 'during', 'including', 'until',
+        'against', 'among', 'throughout', 'despite', 'towards', 'upon', 'concerning',
+        'about', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
+        'could', 'would', 'will', 'also', 'their', 'this', 'that', 'its', 'it', 'to',
+        'what', 'which', 'who', 'whom', 'whose', 'when', 'where', 'why', 'how', 'than',
+        # 금융/웹사이트 관련 노이즈 (의미 없는 키워드)
+        'stock', 'stocks', 'market', 'markets', 'share', 'shares', 'price', 'prices', 
+        'investing', 'investor', 'investors', 'trading', 'coin', 'coins', 'crypto', 
+        'cryptocurrency', 'bitcoin', 'ethereum', 'daily', 'report', 'analysis', 
+        'forecast', 'update', 'today', 'says', 'said', 'expected', 'likely', 'potential',
+        'announced', 'latest', 'breaking', 'news', 'brief', 'summary', 'outlook'
+    }
+
+    # 2. 모든 기사 텍스트 결합 및 전처리
+    combined_text = " ".join(full_texts).lower()
+    clean_text = re.sub(r'&[a-z]+;', ' ', combined_text) # HTML 엔티티 제거
+    clean_text = re.sub(r'[^\w\s]', ' ', clean_text)    # 특수문자 제거
+    
+    words = clean_text.split()
+    
+    # 3. 필터링 로직
+    filtered_words = []
+    ticker_parts = set(ticker_name.lower().split())
+    
+    for w in words:
+        # 조건: 3글자 이상 + 숫자가 아님 + 불용어 아님 + 기업명 아님
+        if len(w) >= 3 and not w.isdigit() and w not in stop_words:
+            # 기업명 혹은 티커가 포함된 단어 제외
+            if not any(part in w for part in ticker_parts if len(part) >= 2):
+                filtered_words.append(w)
+    
+    # 4. 빈도 분석 (전체 텍스트에서 가장 많이 언급된 상위 3개)
+    counts = Counter(filtered_words)
+    most_common = counts.most_common(3)
+    
+    if market == 'us':
+        return [word.capitalize() for word, count in most_common]
+    return [word for word, count in most_common]
+
+
 if st.button("📊 분석 시작"):
     data = []
     latest_day = get_safe_trading_day()
@@ -167,16 +226,18 @@ if st.button("📊 분석 시작"):
     for ticker in tickers:
         with st.spinner(f'{ticker} 분석 중...'):
             try:
-                # 초기화
+                # 1. 기초 데이터 초기화
                 per, pbr, div, change_24h = 0, 0, 0, 0
+                name = ""
 
+                # 2. 시장별 가격 및 지표 수집
                 if st.session_state.market == 'crypto':
                     c_data = get_crypto_data(ticker)
                     if not c_data: continue
                     name, price = ticker, c_data['현재가']
                     high, low = c_data['52주 고점'], c_data['52주 저점']
-                    change_24h = c_data['24시간 변동률 (%)'] # 별도 변수에 저장
-                    news_titles, sentiment_label, s_score = get_stock_news(ticker, 'kr')
+                    change_24h = c_data['24시간 변동률 (%)']
+                    query = ticker # 코인은 티커로 뉴스 검색
 
                 elif st.session_state.market == 'us':
                     params = {'token': FINNHUB_API_KEY, 'symbol': ticker}
@@ -186,17 +247,14 @@ if st.button("📊 분석 시작"):
                     
                     if 'c' not in q or q['c'] == 0: continue
                     name, price = p.get('name', ticker), q['c']
-                    
-                    # ✅ [수정 포인트] NoneType 에러 방지를 위한 get(, 0) 및 안전한 float 변환
                     high = f['metric'].get('52WeekHigh', price) or price
                     low = f['metric'].get('52WeekLow', price) or price
                     per = f['metric'].get('peBasicExclExtraTTM', 0) or 0
                     pbr = f['metric'].get('pbAnnual', 0) or 0
                     div = f['metric'].get('dividendYieldIndicatedAnnual', 0) or 0
+                    query = ticker # 미국 주식은 티커로 뉴스 검색
                     
-                    news_titles, sentiment_label, s_score = get_stock_news(ticker, 'us')
-                else:
-                    # 한국 주식 로직 (기존과 동일)
+                else: # 한국 주식
                     name = stock.get_market_ticker_name(ticker)
                     if not name: continue
                     df_p = stock.get_market_ohlcv_by_date(latest_day, latest_day, ticker)
@@ -204,19 +262,24 @@ if st.button("📊 분석 시작"):
                     hist = stock.get_market_ohlcv_by_date(one_year_ago, latest_day, ticker)
                     high, low = hist['고가'].max(), hist['저가'].min()
                     per, pbr, div = get_kr_indicators(ticker)
-                    news_titles, sentiment_label, s_score = get_stock_news(name, 'kr')
-                
-                # 데이터 추가 부분
+                    query = name # 한국 주식은 기업명으로 뉴스 검색
+
+
+                display_titles, analysis_texts, sentiment_label, s_score = get_stock_news(query, st.session_state.market)
+
+                # 키워드 추출
+                keywords = extract_keywords(analysis_texts, name, st.session_state.market)
+
+                # 4. 데이터 저장
                 data.append({
                     '종목': ticker, '기업명': name, '현재가': price, '52주 고점': float(high),
-                    'PER': round(float(per), 2), 
-                    'PBR': round(float(pbr), 2), 
-                    '배당률 (%)': round(float(div), 2),
-                    '24시간 변동률 (%)': round(float(change_24h), 2), # ✅ 신규 열 추가
+                    'PER': round(float(per), 2), 'PBR': round(float(pbr), 2), '배당률 (%)': round(float(div), 2),
+                    '24시간 변동률 (%)': round(float(change_24h), 2),
                     '고점대비 (%)': round(((price / high) - 1) * 100, 2) if high != 0 else 0, 
                     '상승여력 (%)': round(((high - price) / (high - low) * 100) if high != low else 0, 2),
                     '뉴스감성': sentiment_label, '감성점수': s_score, 
-                    '최근뉴스': news_titles[0] if news_titles else "최근 뉴스 없음"
+                    '최근뉴스': display_titles[0] if display_titles else "최근 뉴스 없음",
+                    '핵심키워드': ", ".join(keywords) if keywords else "데이터 없음"
                 })
             except Exception as e: st.error(f"{ticker} 실패: {e}")
             
@@ -290,6 +353,7 @@ if df is not None:
         st.markdown(f"""
         <div style="background-color: {bg}; color: {txt}; padding: 15px; border-radius: 10px; margin-bottom: 12px; border: 1px solid #ddd;">
             📌 <b>{row['기업명']}</b> ({row['종목']}) | {row['뉴스감성']}<br>
+            <div style="margin: 5px 0;">🏷️ <b>주요 키워드:</b> {row['핵심키워드']}</div>
             <div style="margin: 5px 0; font-size: 0.85em; opacity: 0.8;">📰 {row['최근뉴스']}</div>
             <b>현재가:</b> {row['현재가']} | <b>상승여력:</b> {row['상승여력 (%)']}% | <b>등급:</b> {row['투자등급']}
         </div>
