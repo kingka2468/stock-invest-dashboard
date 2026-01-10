@@ -100,41 +100,37 @@ def get_safe_trading_day():
     return datetime.now().strftime("%Y%m%d")
 
 def get_kr_indicators(ticker):
-    """
-    네이버 금융에서 PER, PBR, 배당수익률을 추출합니다.
-    데이터가 'N/A'이거나 부재할 경우 정확히 0.0을 반환하도록 예외 처리를 강화했습니다.
-    """
     url = f"https://finance.naver.com/item/main.naver?code={ticker}"
     try:
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5).text
         
         def parse_value(pattern, text):
-            # 1. 지정된 패턴으로 텍스트 영역 탐색
             match = re.search(pattern, text, re.DOTALL)
             if match:
                 raw_data = match.group(1).strip()
-                # 2. 데이터가 'N/A'를 포함하거나 비어있으면 0.0 반환
-                if 'N/A' in raw_data.upper() or not raw_data:
+                # N/A 또는 마이너스 표시(-)가 있으면 0.0 반환 (적자 업종/종목 처리)
+                if 'N/A' in raw_data.upper() or not raw_data or raw_data == '-':
                     return 0.0
                 
-                # 3. 숫자, 소수점, 콤마만 남기고 정제
-                val_str = re.sub(r'[^\d,.]', '', raw_data).replace(',', '')
+                # 숫자, 소수점, 콤마, 마이너스 기호만 남기고 제거
+                val_str = re.sub(r'[^\d,.\-]', '', raw_data).replace(',', '')
                 try:
-                    return float(val_str) if val_str else 0.0
+                    val = float(val_str)
+                    # 업종 PER이 10,000 이상인 경우 데이터 오류 혹은 비정상치로 보고 0.0 처리
+                    return val if -1000 < val < 10000 else 0.0
                 except:
                     return 0.0
             return 0.0
 
-        # PER: id="_per" 내부 텍스트 검사
         per = parse_value(r'id="_per">(.+?)<', res)
-        # PBR: id="_pbr" 내부 텍스트 검사
         pbr = parse_value(r'id="_pbr">(.+?)<', res)
-        # 배당수익률: em 태그 내부 텍스트 검사
         div = parse_value(r'배당수익률.*?<em.*?>(.+?)</em>', res)
+        sec_per = parse_value(r'동일업종 PER.*?<em.*?>([\d,.\-\s]+).*?</em>', res)
 
-        return per, pbr, div
+        return per, pbr, div, sec_per
     except:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0
+
 
 def get_crypto_data(ticker):
     """업비트 Public API를 사용하여 암호화폐 시세 및 52주 고/저점 데이터 수집"""
@@ -249,7 +245,8 @@ if st.button("📊 분석 시작"):
     for ticker in tickers:
         with st.spinner(f'{ticker} 분석 중...'):
             try:
-                per, pbr, div, change_24h = 0, 0, 0, 0
+                per, pbr, div, change_24h, sec_per = 0, 0, 0, 0, 0
+                under_val = "N/A"
                 name = ""
 
                 # [시장별 데이터 분기 처리]
@@ -260,6 +257,7 @@ if st.button("📊 분석 시작"):
                     high, low = c_data['52주 고점'], c_data['52주 저점']
                     change_24h = c_data['24시간 변동률 (%)']
                     query = ticker
+                    # 코인은 업종PER이 없으므로 기본값(0, N/A) 유지
 
                 elif st.session_state.market == 'us':
                     params = {'token': FINNHUB_API_KEY, 'symbol': ticker}
@@ -275,16 +273,25 @@ if st.button("📊 분석 시작"):
                     pbr = f['metric'].get('pbAnnual', 0) or 0
                     div = f['metric'].get('dividendYieldIndicatedAnnual', 0) or 0
                     query = ticker
+                    # 미국 주식도 현재 로직상 업종PER은 0으로 처리 (필요시 추가 구현 가능)
                     
-                else: # 한국 주식 (KRX 라이브러리 활용)
+                else: # 한국 주식
                     name = stock.get_market_ticker_name(ticker)
                     if not name: continue
                     df_p = stock.get_market_ohlcv_by_date(latest_day, latest_day, ticker)
                     price = int(df_p['종가'].iloc[0])
                     hist = stock.get_market_ohlcv_by_date(one_year_ago, latest_day, ticker)
                     high, low = hist['고가'].max(), hist['저가'].min()
-                    per, pbr, div = get_kr_indicators(ticker)
+                    
+                    # 한국 주식만 업종PER 데이터 업데이트
+                    per, pbr, div, sec_per = get_kr_indicators(ticker)
                     query = name
+                    
+                    # 저평가 여부 로직 (한국 주식 전용)
+                    if per > 0 and sec_per > 0:
+                        under_val = "저평가" if per < sec_per else "고평가"
+                    elif per > 0 and sec_per == 0:
+                        under_val = "업종적자"
 
                 # 뉴스 및 핵심 키워드 수집
                 display_titles, analysis_texts, sentiment_label, s_score = get_stock_news(query, st.session_state.market)
@@ -292,12 +299,20 @@ if st.button("📊 분석 시작"):
 
                 # 데이터 취합 (계산 필드 포함)
                 data.append({
-                    '종목': ticker, '기업명': name, '현재가': price, '52주 고점': float(high),
-                    'PER': round(float(per), 2), 'PBR': round(float(pbr), 2), '배당률 (%)': round(float(div), 2),
+                    '종목': ticker, 
+                    '기업명': name, 
+                    '현재가': price, 
+                    '52주 고점': float(high),
+                    'PER': round(float(per), 2), 
+                    '업종PER': round(float(sec_per), 2),
+                    '저평가여부(PER)': under_val,
+                    'PBR': round(float(pbr), 2), 
+                    '배당률 (%)': round(float(div), 2),
                     '24시간 변동률 (%)': round(float(change_24h), 2),
                     '고점대비 (%)': round(((price / high) - 1) * 100, 2) if high != 0 else 0, 
                     '상승여력 (%)': round(((high - price) / (high - low) * 100) if high != low else 0, 2),
-                    '뉴스감성': sentiment_label, '감성점수': s_score, 
+                    '뉴스감성': sentiment_label, 
+                    '감성점수': s_score, 
                     '최근뉴스': display_titles[0] if display_titles else "최근 뉴스 없음",
                     '핵심키워드': ", ".join(keywords) if keywords else "데이터 없음"
                 })
@@ -307,14 +322,17 @@ if st.button("📊 분석 시작"):
         df = pd.DataFrame(data)
         
         def classify(row):
-            """정량적 지표와 감성 점수를 합산하여 투자 등급 산출 (0~4점)"""
             score = 0
             if row['고점대비 (%)'] <= -min_drop: score += 1
             if row['상승여력 (%)'] >= min_up: score += 1
             if row['감성점수'] > 0: score += 0.5
             
             if st.session_state.market != 'crypto':
-                if 0 < row['PER'] <= max_per: score += 1
+                # 보강된 로직: PER이 0보다 크고 업종 평균보다 낮으면 가점
+                if 0 < row['PER'] <= row['업종PER']: 
+                    score += 1
+                elif 0 < row['PER'] <= max_per: # 업종데이터가 없더라도 설정한 기준보다 낮으면 가점
+                    score += 0.5
                 if row['배당률 (%)'] >= min_div: score += 1
             
             mapping = {4:'🔥🔥🔥🔥 초초적극 매수', 3:'🔥🔥🔥 초적극 매수', 2:'🔥🔥 적극 매수', 1:'🔥 매수', 0:'👀 관망'}
@@ -328,7 +346,7 @@ if st.button("📊 분석 시작"):
 # ==============================================================================
 df = st.session_state.df
 if df is not None:
-    # 데이터프레임 열 순서 조정
+    # 1. 열 순서 조정
     cols = list(df.columns)
     if '투자등급' in cols: cols.remove('투자등급')
     if '뉴스감성' in cols: cols.remove('뉴스감성')
@@ -339,7 +357,7 @@ if df is not None:
     display_cols = [c for c in cols if c not in ['감성점수', '최근뉴스']]
     display_df = df[display_cols]
 
-    # 스타일링 함수 정의
+    # 2. 스타일 함수 (기존과 동일)
     def get_color_code(val):
         if '🔥🔥🔥🔥' in val: return 'darkred', 'white'
         if '🔥🔥🔥' in val: return '#ff4b4b', 'white'
@@ -352,35 +370,37 @@ if df is not None:
         if '부정' in val: return 'background-color: #fce8e6; color: #c5221f'
         return 'background-color: #f1f3f4; color: #3c4043'
 
-    st.subheader("📋 종합 투자 분석 표")
+    def get_undervalued_style(val):
+        if val == "저평가": return 'color: blue; font-weight: bold'
+        if val == "고평가": return 'color: red'
+        if val == "업종적자": return 'color: orange'
+        return 'color: gray'
 
-    # 한국 시장 여부 확인 (현재가 포맷팅용)
+    st.subheader("📋 종합 투자 분석 표")
     is_kr = st.session_state.market == 'kr'
 
-    # 1. 소수점 및 N/A 포맷팅 적용
+    # 3. 스타일 통합 적용 (set_properties로 오른쪽 정렬 추가)
     styled_df = display_df.style.format({
-        'PER': lambda x: "N/A" if x == 0 else f"{x:.2f}",
-        'PBR': lambda x: "N/A" if x == 0 else f"{x:.2f}",
-        '배당률 (%)': lambda x: "N/A" if x == 0 else f"{x:.2f}",
+        'PER': lambda x: "N/A" if x <= 0 else f"{x:.2f}",
+        '업종PER': lambda x: "N/A" if x <= 0 else f"{x:.2f}",
+        'PBR': lambda x: "N/A" if x <= 0 else f"{x:.2f}",
+        '배당률 (%)': lambda x: "N/A" if x <= 0 else f"{x:.2f}",
         '24시간 변동률 (%)': "{:.2f}",
         '고점대비 (%)': "{:.2f}",
         '상승여력 (%)': "{:.2f}",
-        '52주 고점': "{:,.0f}" if is_kr else "{:,.2f}", # 국장은 정수, 외장/코인은 소수점 2자리
-        '현재가': "{:,.0f}" if is_kr else "{:,.2f}" # 국장은 정수, 외장/코인은 소수점 2자리
-    })
-    
-    # 2. 배경색 및 조건부 서식 추가 적용
-    styled_df = styled_df.apply(lambda x: [f"background-color: {get_color_code(v)[0]}; color: {get_color_code(v)[1]}" for v in x], subset=['투자등급'])\
-        .applymap(get_sentiment_color, subset=['뉴스감성'])\
-        .apply(lambda s: ['background-color: #d1f7d6' if 0 < v <= max_per else '' for v in s], subset=['PER'])\
-        .apply(lambda s: ['background-color: #d1e0f7' if v <= -min_drop else '' for v in s], subset=['고점대비 (%)'])\
-        .apply(lambda s: ['background-color: #fff0b3' if v >= min_up else '' for v in s], subset=['상승여력 (%)'])\
-        .apply(lambda s: ['background-color: #fde2e2' if v >= min_div else '' for v in s], subset=['배당률 (%)'])\
-        .apply(lambda s: ['background-color: #e8f0fe' if abs(v) > 5 else '' for v in s], subset=['24시간 변동률 (%)'])
-    
-    # 3. 화면 출력
-    st.dataframe(styled_df, use_container_width=True)
+        '52주 고점': "{:,.0f}" if is_kr else "{:,.2f}",
+        '현재가': "{:,.0f}" if is_kr else "{:,.2f}"
+    }).set_properties(subset=['저평가여부(PER)'], **{'text-align': 'right'})\
+      .apply(lambda x: [f"background-color: {get_color_code(v)[0]}; color: {get_color_code(v)[1]}" for v in x], subset=['투자등급'])\
+      .applymap(get_sentiment_color, subset=['뉴스감성'])\
+      .apply(lambda s: [get_undervalued_style(v) for v in s], subset=['저평가여부(PER)'])\
+      .apply(lambda s: ['background-color: #d1f7d6' if 0 < v <= max_per else '' for v in s], subset=['PER'])\
+      .apply(lambda s: ['background-color: #d1e0f7' if v <= -min_drop else '' for v in s], subset=['고점대비 (%)'])\
+      .apply(lambda s: ['background-color: #fff0b3' if v >= min_up else '' for v in s], subset=['상승여력 (%)'])\
+      .apply(lambda s: ['background-color: #fde2e2' if v >= min_div else '' for v in s], subset=['배당률 (%)'])
 
+    # 4. 화면 출력 (config에서 alignment 제거)
+    st.dataframe(styled_df, use_container_width=True)
 
     # 종목별 상세 요약 카드 출력
     st.subheader("🧠 AI 투자 요약")
