@@ -1,7 +1,7 @@
 {
-  "tickers": "MAIN, LMT, PG, UNH, META, TSM",
+  "tickers": "AMZN, AAPL, MSFT, GOOGL, META, NVDA, UNH, ORCL, REGN, BE, CRM, PLTR, TSLA, NKE, ONON, GM, F, SBUX, V, BRK.B, PG, LMT, MAIN, WELL, KO, MCD, DIS, NFLX, MMM, PYPL, ADBE, LVMUY, TSM, AVGO, INTC, MU, AMD, INTU, QCOM, NXPI, ASML",
   "max_per": 20,
-  "min_up": 56,
-  "min_drop": 35,
+  "min_up": 70,
+  "min_drop": 30,
   "min_div": 4.0
 }

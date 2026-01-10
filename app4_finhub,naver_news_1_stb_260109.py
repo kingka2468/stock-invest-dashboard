@@ -83,8 +83,8 @@ def get_kr_indicators(ticker):
     except: return 0.0, 0.0, 0.0
 
 # --- 4. UI 및 메인 로직 ---
-st.set_page_config(page_title="주식 투자 판단 대시보드 v12.3", layout="wide")
-st.title("📊 주식 투자 판단 대시보드 (v12.3)")
+st.set_page_config(page_title="주식 투자 판단 대시보드 v13.0", layout="wide")
+st.title("📊 주식 투자 판단 대시보드 (v13.0)")
 
 market_choice = st.radio("📌 시장 선택", ["한국", "미국"], horizontal=True)
 st.session_state.market = 'kr' if market_choice == "한국" else 'us'
@@ -115,7 +115,7 @@ tickers_input = st.text_input("✅ 종목 코드를 입력하세요", st.session
 st.session_state.tickers_input = tickers_input
 tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
-# --- 5. 분석 시작 ---
+# --- 5. 분석 시작 (미국 주식 None 처리 로직 수정) ---
 if st.button("📊 분석 시작"):
     data = []
     latest_day = get_safe_trading_day()
@@ -129,12 +129,20 @@ if st.button("📊 분석 시작"):
                     q = requests.get("https://finnhub.io/api/v1/quote", params=params).json()
                     p = requests.get("https://finnhub.io/api/v1/stock/profile2", params=params).json()
                     f = requests.get("https://finnhub.io/api/v1/stock/metric", params={**params, 'metric': 'all'}).json()
+                    
                     if 'c' not in q or q['c'] == 0: continue
                     name, price = p.get('name', ticker), q['c']
-                    high, low = f['metric'].get('52WeekHigh', 0), f['metric'].get('52WeekLow', 0)
-                    per, pbr, div = f['metric'].get('peBasicExclExtraTTM', 0), f['metric'].get('pbAnnual', 0), f['metric'].get('dividendYieldIndicatedAnnual', 0)
+                    
+                    # ✅ [수정 포인트] NoneType 에러 방지를 위한 get(, 0) 및 안전한 float 변환
+                    high = f['metric'].get('52WeekHigh', price) or price
+                    low = f['metric'].get('52WeekLow', price) or price
+                    per = f['metric'].get('peBasicExclExtraTTM', 0) or 0
+                    pbr = f['metric'].get('pbAnnual', 0) or 0
+                    div = f['metric'].get('dividendYieldIndicatedAnnual', 0) or 0
+                    
                     news_titles, sentiment_label, s_score = get_stock_news(ticker, 'us')
                 else:
+                    # 한국 주식 로직 (기존과 동일)
                     name = stock.get_market_ticker_name(ticker)
                     if not name: continue
                     df_p = stock.get_market_ohlcv_by_date(latest_day, latest_day, ticker)
@@ -144,8 +152,9 @@ if st.button("📊 분석 시작"):
                     per, pbr, div = get_kr_indicators(ticker)
                     news_titles, sentiment_label, s_score = get_stock_news(name, 'kr')
                 
+                # 데이터 추가 부분
                 data.append({
-                    '종목': ticker, '기업명': name, '현재가': price, '52주 고점': float(high or price),
+                    '종목': ticker, '기업명': name, '현재가': price, '52주 고점': float(high),
                     'PER': round(float(per), 2), 'PBR': round(float(pbr), 2), '배당률 (%)': round(float(div), 2),
                     '고점대비 (%)': round(((price / high) - 1) * 100, 2) if high != 0 else 0, 
                     '상승여력 (%)': round(((high - price) / (high - low) * 100) if high != low else 0, 2),
@@ -171,6 +180,23 @@ if st.button("📊 분석 시작"):
 # --- 6. 결과 출력 ---
 df = st.session_state.df
 if df is not None:
+    # 1. 열 순서 재배치 (기업명 -> 투자등급 -> 뉴스감성 -> 현재가 순서)
+    cols = list(df.columns)
+    
+    # 순서 조정을 위해 기존 위치에서 제거
+    if '투자등급' in cols: cols.remove('투자등급')
+    if '뉴스감성' in cols: cols.remove('뉴스감성')
+    
+    # '기업명' 인덱스를 찾아 그 바로 뒤에 순서대로 삽입
+    target_idx = cols.index('기업명') + 1
+    cols.insert(target_idx, '투자등급')
+    cols.insert(target_idx + 1, '뉴스감성')
+    
+    # 불필요한 열 제외하고 순서가 반영된 데이터프레임 생성
+    display_cols = [c for c in cols if c not in ['감성점수', '최근뉴스']]
+    display_df = df[display_cols]
+
+    # 투자등급 색상 함수
     def get_color_code(val):
         if '🔥🔥🔥🔥' in val: return 'darkred', 'white'
         if '🔥🔥🔥' in val: return '#ff4b4b', 'white'
@@ -178,12 +204,22 @@ if df is not None:
         if '🔥' in val: return '#DAA520', 'black'
         return '#f0f2f6', 'black'
 
+    # 뉴스감성 은은한 음영 함수
+    def get_sentiment_color(val):
+        if '긍정' in val: return 'background-color: #e6f4ea; color: #137333' # 연한 녹색
+        if '부정' in val: return 'background-color: #fce8e6; color: #c5221f' # 연한 빨간색
+        return 'background-color: #f1f3f4; color: #3c4043' # 연한 회색 (중립)
+
     st.subheader("📋 종합 투자 분석 표")
-    styled_df = df.drop(columns=['감성점수', '최근뉴스']).style.apply(lambda x: [f"background-color: {get_color_code(v)[0]}; color: {get_color_code(v)[1]}" for v in x], subset=['투자등급'])\
+    
+    # 2. 스타일 적용 (display_df 사용)
+    styled_df = display_df.style.apply(lambda x: [f"background-color: {get_color_code(v)[0]}; color: {get_color_code(v)[1]}" for v in x], subset=['투자등급'])\
+        .applymap(get_sentiment_color, subset=['뉴스감성'])\
         .apply(lambda s: ['background-color: #d1f7d6' if 0 < v <= max_per else '' for v in s], subset=['PER'])\
         .apply(lambda s: ['background-color: #d1e0f7' if v <= -min_drop else '' for v in s], subset=['고점대비 (%)'])\
         .apply(lambda s: ['background-color: #fff0b3' if v >= min_up else '' for v in s], subset=['상승여력 (%)'])\
         .apply(lambda s: ['background-color: #fde2e2' if v >= min_div else '' for v in s], subset=['배당률 (%)'])
+    
     st.dataframe(styled_df, use_container_width=True)
 
     st.subheader("🧠 AI 투자 요약")
@@ -200,7 +236,7 @@ if df is not None:
     st.subheader("📈 투자 지표 대시보드")
     
     # ✅ 버블 차트 크기 및 시인성 개선
-    size_encoding = alt.Size('배당률 (%)', scale=alt.Scale(range=[200, 1000]), legend=alt.Legend(title="배당률 크기")) if enable_div else alt.value(300)
+    size_encoding = alt.Size('배당률 (%)', scale=alt.Scale(range=[150, 700]), legend=alt.Legend(title="배당률 크기")) if enable_div else alt.value(150)
     
     bubble = alt.Chart(df).mark_circle(opacity=0.7, stroke='white', strokeWidth=1).encode(
         x=alt.X('PER', title='PER (주가수익비율)'),

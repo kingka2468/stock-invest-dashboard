@@ -98,39 +98,12 @@ def get_kr_indicators(ticker):
         return clean(per), clean(pbr), clean(div)
     except: return 0.0, 0.0, 0.0
 
-def get_crypto_data(ticker):
-    """업비트 API를 사용하여 암호화폐 시세 및 변동률을 가져옵니다."""
-    try:
-        # 업비트 시세 조회 (KRW-BTC 형태)
-        url = f"https://api.upbit.com/v1/ticker?markets=KRW-{ticker}"
-        res = requests.get(url, timeout=5).json()
-        if not res: return None
-        
-        data = res[0]
-        curr_price = data['trade_price']
-        high_52 = data['highest_52_week_price']
-        low_52 = data['lowest_52_week_price']
-        change_24h = data['signed_change_rate'] * 100 # 24시간 변동률 (%)
-        
-        return {
-            '현재가': curr_price,
-            '52주 고점': high_52,
-            '52주 저점': low_52,
-            '24시간 변동률 (%)': round(change_24h, 2)
-        }
-    except: return None
-
 # --- 4. UI 및 메인 로직 ---
-st.set_page_config(page_title="주식 투자 판단 대시보드 v13.1", layout="wide")
-st.title("📊 주식 투자 판단 대시보드 (v13.1)")
+st.set_page_config(page_title="주식 투자 판단 대시보드 v13.0", layout="wide")
+st.title("📊 주식 투자 판단 대시보드 (v13.0)")
 
-# 시장 선택에 암호화폐 추가
-market_choice = st.radio("📌 대상 선택", ["한국 주식", "미국 주식", "암호화폐"], horizontal=True)
-st.session_state.market = 'kr' if market_choice == "한국 주식" else 'us' if market_choice == "미국 주식" else 'crypto'
-
-# 기본 티커 설정 변경 (암호화폐 선택 시 예시)
-if st.session_state.market == 'crypto' and st.session_state.tickers_input.startswith("005930"):
-    st.session_state.tickers_input = "BTC, ETH, SOL, XRP, DOGE, ADA"
+market_choice = st.radio("📌 시장 선택", ["한국", "미국"], horizontal=True)
+st.session_state.market = 'kr' if market_choice == "한국" else 'us'
 
 st.sidebar.header("🎯 필터 기준")
 max_per = st.sidebar.slider("PER 최대값", 0, 50, st.session_state.max_per)
@@ -167,18 +140,7 @@ if st.button("📊 분석 시작"):
     for ticker in tickers:
         with st.spinner(f'{ticker} 분석 중...'):
             try:
-                # 초기화
-                per, pbr, div, change_24h = 0, 0, 0, 0
-
-                if st.session_state.market == 'crypto':
-                    c_data = get_crypto_data(ticker)
-                    if not c_data: continue
-                    name, price = ticker, c_data['현재가']
-                    high, low = c_data['52주 고점'], c_data['52주 저점']
-                    change_24h = c_data['24시간 변동률 (%)'] # 별도 변수에 저장
-                    news_titles, sentiment_label, s_score = get_stock_news(ticker, 'kr')
-
-                elif st.session_state.market == 'us':
+                if st.session_state.market == 'us':
                     params = {'token': FINNHUB_API_KEY, 'symbol': ticker}
                     q = requests.get("https://finnhub.io/api/v1/quote", params=params).json()
                     p = requests.get("https://finnhub.io/api/v1/stock/profile2", params=params).json()
@@ -209,10 +171,7 @@ if st.button("📊 분석 시작"):
                 # 데이터 추가 부분
                 data.append({
                     '종목': ticker, '기업명': name, '현재가': price, '52주 고점': float(high),
-                    'PER': round(float(per), 2), 
-                    'PBR': round(float(pbr), 2), 
-                    '배당률 (%)': round(float(div), 2),
-                    '24시간 변동률 (%)': round(float(change_24h), 2), # ✅ 신규 열 추가
+                    'PER': round(float(per), 2), 'PBR': round(float(pbr), 2), '배당률 (%)': round(float(div), 2),
                     '고점대비 (%)': round(((price / high) - 1) * 100, 2) if high != 0 else 0, 
                     '상승여력 (%)': round(((high - price) / (high - low) * 100) if high != low else 0, 2),
                     '뉴스감성': sentiment_label, '감성점수': s_score, 
@@ -226,15 +185,11 @@ if st.button("📊 분석 시작"):
             score = 0
             if row['고점대비 (%)'] <= -min_drop: score += 1
             if row['상승여력 (%)'] >= min_up: score += 1
+            if 0 < row['PER'] <= max_per: score += 1
+            if row['배당률 (%)'] >= min_div: score += 1
             if row['감성점수'] > 0: score += 0.5
-            
-            if st.session_state.market != 'crypto':
-                if 0 < row['PER'] <= max_per: score += 1
-                if row['배당률 (%)'] >= min_div: score += 1
-            # 암호화폐 전용 등급 보정 (필요시 추가)
-            
             return {4:'🔥🔥🔥🔥 초초적극 매수', 3:'🔥🔥🔥 초적극 매수', 2:'🔥🔥 적극 매수', 1:'🔥 매수', 0:'👀 관망'}.get(int(score), '👀 관망')
-
+        
         df['투자등급'] = df.apply(classify, axis=1)
         st.session_state.df = df
 
@@ -248,12 +203,12 @@ if df is not None:
     if '투자등급' in cols: cols.remove('투자등급')
     if '뉴스감성' in cols: cols.remove('뉴스감성')
     
-    # 열 순서 설정
+    # '기업명' 인덱스를 찾아 그 바로 뒤에 순서대로 삽입
     target_idx = cols.index('기업명') + 1
     cols.insert(target_idx, '투자등급')
     cols.insert(target_idx + 1, '뉴스감성')
     
-    # 암호화폐일 때 PER은 0으로 두고 '24시간 변동률 (%)'을 강조
+    # 불필요한 열 제외하고 순서가 반영된 데이터프레임 생성
     display_cols = [c for c in cols if c not in ['감성점수', '최근뉴스']]
     display_df = df[display_cols]
 
@@ -279,8 +234,7 @@ if df is not None:
         .apply(lambda s: ['background-color: #d1f7d6' if 0 < v <= max_per else '' for v in s], subset=['PER'])\
         .apply(lambda s: ['background-color: #d1e0f7' if v <= -min_drop else '' for v in s], subset=['고점대비 (%)'])\
         .apply(lambda s: ['background-color: #fff0b3' if v >= min_up else '' for v in s], subset=['상승여력 (%)'])\
-        .apply(lambda s: ['background-color: #fde2e2' if v >= min_div else '' for v in s], subset=['배당률 (%)'])\
-        .apply(lambda s: ['background-color: #e8f0fe' if abs(v) > 5 else '' for v in s], subset=['24시간 변동률 (%)']) # 변동률 큰 종목 강조
+        .apply(lambda s: ['background-color: #fde2e2' if v >= min_div else '' for v in s], subset=['배당률 (%)'])
     
     st.dataframe(styled_df, use_container_width=True)
 
@@ -296,51 +250,34 @@ if df is not None:
         """, unsafe_allow_html=True)
 
     
-    # ✅ 버블 차트 섹션 (동적 축 이름 반영 버전)
+    # ✅ 버블 차트 크기 및 시인성 개선
     st.subheader("📈 투자 지표 대시보드")
     
-    # 1. 시장별 동적 설정 (제목 및 축 이름)
-    if st.session_state.market == 'crypto':
-        x_title = '24시간 변동률 (%)'
-        chart_main_title = "암호화폐 변동성 대비 상승여력 분석"
-        # 암호화폐는 배당이 없으므로 크기 고정 또는 다른 지표 권장
-        bubble_size_title = "고정 크기" if not enable_div else "배당률(0%)"
-    else:
-        x_title = 'PER (주가수익비율)'
-        chart_main_title = "PER 대비 상승여력 분석 (버블 크기: 배당률)"
-        bubble_size_title = "배당률 크기"
-
-    # 시장에 따른 X축 데이터 열 선택
-    x_axis_val = '24시간 변동률 (%)' if st.session_state.market == 'crypto' else 'PER'
-    x_title = '24시간 변동률 (%)' if st.session_state.market == 'crypto' else 'PER (주가수익비율)'
-
-    # 2. 버블이 짤리지 않도록 축의 범위를 데이터보다 넓게 설정
-    per_min, per_max = df[x_axis_val].min(), df[x_axis_val].max()
+    # 1. 버블이 짤리지 않도록 축의 범위를 데이터보다 넓게 설정
+    per_min, per_max = df['PER'].min(), df['PER'].max()
     up_min, up_max = df['상승여력 (%)'].min(), df['상승여력 (%)'].max()
 
+    # 데이터 범위의 약 15% 정도 여유 공간 계산
     per_margin = (per_max - per_min) * 0.15 if per_max != per_min else 5
     up_margin = (up_max - up_min) * 0.15 if up_max != up_min else 5
 
-    # 3. 버블 크기 설정
-    size_encoding = alt.Size('배당률 (%)', 
-                             scale=alt.Scale(range=[150, 800]), 
-                             legend=alt.Legend(title=bubble_size_title)) if enable_div else alt.value(150)
+    # 2. 버블 크기 설정
+    size_encoding = alt.Size('배당률 (%)', scale=alt.Scale(range=[150, 800]), legend=alt.Legend(title="배당률 크기")) if enable_div else alt.value(150)
     
-    # 4. 차트 생성
     bubble = alt.Chart(df).mark_circle(opacity=0.7, stroke='white', strokeWidth=1).encode(
-        x=alt.X(x_axis_val, 
-                title=x_title, # ✅ 동적 타이틀 반영
-                scale=alt.Scale(domain=[per_min - per_margin, per_max + per_margin])),
+        x=alt.X('PER', 
+                title='PER (주가수익비율)', 
+                scale=alt.Scale(domain=[per_min - per_margin, per_max + per_margin])), # X축 범위 확장
         y=alt.Y('상승여력 (%)', 
                 title='상승여력 (고점 대비 %)', 
-                scale=alt.Scale(domain=[up_min - up_margin, up_max + up_margin])),
+                scale=alt.Scale(domain=[up_min - up_margin, up_max + up_margin])), # Y축 범위 확장
         color=alt.Color('투자등급', legend=alt.Legend(title="투자 등급")),
         size=size_encoding,
-        tooltip=['기업명', '종목', x_axis_val, '상승여력 (%)', '배당률 (%)', '뉴스감성']
+        tooltip=['기업명', '종목', 'PER', '상승여력 (%)', '배당률 (%)', '뉴스감성']
     ).properties(
         height=500, 
-        title=chart_main_title, # ✅ 동적 메인 타이틀 반영
-        padding={"left": 30, "top": 30, "right": 30, "bottom": 30}
+        title="PER 대비 상승여력 분석 (버블 크기: 배당률)",
+        padding={"left": 30, "top": 30, "right": 30, "bottom": 30} # 여백 추가 확보
     ).interactive()
     
     st.altair_chart(bubble, use_container_width=True)
